@@ -1,0 +1,315 @@
+<!DOCTYPE html><html><head><meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Glowing Flock</title>
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.8.0/lib/p5.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        #canvas-container {
+            width: 100%;
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: center;
+            position: relative;
+        }
+        .info {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: rgba(255,255,255,0.7);
+            font-family: Arial, sans-serif;
+            font-size: 12px;
+            pointer-events: none;
+        }
+    </style>
+
+<base target="_self">
+
+
+    </head><body><div id="canvas-container"></div>
+    <div class="info">Click to add attractors | Drag to guide the flock</div>
+
+    <script>
+        const sketch = (p) => {
+            let flock = [];
+            let attractors = [];
+            const maxBoids = 500;
+            let bgColor;
+            let colorPalette = [];
+            let trailGraphics;
+
+            p.setup = () => {
+                const canvas = p.createCanvas(p.min(p.windowWidth, 1200), p.min(p.windowHeight, 800));
+                canvas.parent('canvas-container');
+                p.colorMode(p.HSB, 360, 100, 100, 1);
+                bgColor = p.color(0, 0, 5);
+                
+                // Create color palette
+                colorPalette = [
+                    p.color(200, 80, 90),
+                    p.color(280, 60, 90),
+                    p.color(40, 70, 90)
+                ];
+                
+                // Create trail buffer
+                trailGraphics = p.createGraphics(p.width, p.height);
+                trailGraphics.colorMode(p.HSB, 360, 100, 100, 1);
+                trailGraphics.background(bgColor);
+                
+                // Initialize flock
+                for (let i = 0; i < 150; i++) {
+                    flock.push(new Boid());
+                }
+                
+                p.noStroke();
+            };
+
+            p.draw = () => {
+                // Fade trails
+                trailGraphics.fill(bgColor);
+                trailGraphics.rectMode(p.CORNER);
+                trailGraphics.rect(0, 0, p.width, p.height);
+                
+                // Draw trails first
+                p.image(trailGraphics, 0, 0);
+                
+                // Update and draw attractors
+                for (let i = attractors.length - 1; i >= 0; i--) {
+                    attractors[i].update();
+                    attractors[i].display();
+                    if (attractors[i].lifespan <= 0) {
+                        attractors.splice(i, 1);
+                    }
+                }
+                
+                // Update and draw boids
+                for (let boid of flock) {
+                    boid.flock(flock);
+                    boid.update();
+                    boid.edges();
+                    boid.display();
+                }
+                
+                // Limit frame rate to 60fps for performance
+                if (p.frameCount % 2 === 0) {
+                    p.frameRate(60);
+                }
+            };
+
+            p.mousePressed = () => {
+                if (p.mouseX > 0 && p.mouseX < p.width && p.mouseY > 0 && p.mouseY < p.height) {
+                    attractors.push(new Attractor(p.mouseX, p.mouseY));
+                }
+            };
+
+            p.mouseDragged = () => {
+                if (p.mouseX > 0 && p.mouseX < p.width && p.mouseY > 0 && p.mouseY < p.height) {
+                    if (attractors.length > 0) {
+                        attractors[attractors.length - 1].pos.set(p.mouseX, p.mouseY);
+                    }
+                }
+            };
+
+            p.windowResized = () => {
+                p.resizeCanvas(p.min(p.windowWidth, 1200), p.min(p.windowHeight, 800));
+                trailGraphics = p.createGraphics(p.width, p.height);
+                trailGraphics.colorMode(p.HSB, 360, 100, 100, 1);
+                trailGraphics.background(bgColor);
+            };
+
+            class Boid {
+                constructor() {
+                    this.pos = p.createVector(p.random(p.width), p.random(p.height));
+                    this.vel = p5.Vector.random2D();
+                    this.vel.setMag(p.random(1, 3));
+                    this.acc = p.createVector();
+                    this.maxForce = 0.2;
+                    this.maxSpeed = 4;
+                    this.size = p.random(3, 8);
+                    this.perception = 80;
+                    this.color = colorPalette[p.floor(p.random(colorPalette.length))];
+                    this.hue = p.hue(this.color);
+                    this.saturation = p.saturation(this.color);
+                    this.brightness = p.brightness(this.color);
+                    this.alpha = 0.8;
+                }
+
+                edges() {
+                    if (this.pos.x > p.width) this.pos.x = 0;
+                    if (this.pos.x < 0) this.pos.x = p.width;
+                    if (this.pos.y > p.height) this.pos.y = 0;
+                    if (this.pos.y < 0) this.pos.y = p.height;
+                }
+
+                align(boids) {
+                    let steering = p.createVector();
+                    let total = 0;
+                    
+                    for (let other of boids) {
+                        let d = p.dist(this.pos.x, this.pos.y, other.pos.x, other.pos.y);
+                        if (other !== this && d < this.perception) {
+                            steering.add(other.vel);
+                            total++;
+                        }
+                    }
+                    
+                    if (total > 0) {
+                        steering.div(total);
+                        steering.setMag(this.maxSpeed);
+                        steering.sub(this.vel);
+                        steering.limit(this.maxForce);
+                    }
+                    return steering;
+                }
+
+                cohesion(boids) {
+                    let steering = p.createVector();
+                    let total = 0;
+                    
+                    for (let other of boids) {
+                        let d = p.dist(this.pos.x, this.pos.y, other.pos.x, other.pos.y);
+                        if (other !== this && d < this.perception) {
+                            steering.add(other.pos);
+                            total++;
+                        }
+                    }
+                    
+                    if (total > 0) {
+                        steering.div(total);
+                        steering.sub(this.pos);
+                        steering.setMag(this.maxSpeed);
+                        steering.sub(this.vel);
+                        steering.limit(this.maxForce);
+                    }
+                    return steering;
+                }
+
+                separation(boids) {
+                    let steering = p.createVector();
+                    let total = 0;
+                    
+                    for (let other of boids) {
+                        let d = p.dist(this.pos.x, this.pos.y, other.pos.x, other.pos.y);
+                        if (other !== this && d < this.perception / 2) {
+                            let diff = p5.Vector.sub(this.pos, other.pos);
+                            diff.div(d * d);
+                            steering.add(diff);
+                            total++;
+                        }
+                    }
+                    
+                    if (total > 0) {
+                        steering.div(total);
+                        steering.setMag(this.maxSpeed);
+                        steering.sub(this.vel);
+                        steering.limit(this.maxForce * 1.5);
+                    }
+                    return steering;
+                }
+
+                attraction() {
+                    let steering = p.createVector();
+                    
+                    for (let attractor of attractors) {
+                        let d = p.dist(this.pos.x, this.pos.y, attractor.pos.x, attractor.pos.y);
+                        if (d < attractor.radius * 2) {
+                            let force = p5.Vector.sub(attractor.pos, this.pos);
+                            let strength = attractor.strength * (1 - d / (attractor.radius * 2));
+                            force.setMag(strength);
+                            steering.add(force);
+                        }
+                    }
+                    
+                    if (steering.mag() > 0) {
+                        steering.limit(this.maxForce * 2);
+                    }
+                    return steering;
+                }
+
+                flock(boids) {
+                    let alignment = this.align(boids);
+                    let cohesion = this.cohesion(boids);
+                    let separation = this.separation(boids);
+                    let attraction = this.attraction();
+                    
+                    alignment.mult(1.0);
+                    cohesion.mult(1.0);
+                    separation.mult(1.5);
+                    attraction.mult(2.0);
+                    
+                    this.acc.add(alignment);
+                    this.acc.add(cohesion);
+                    this.acc.add(separation);
+                    this.acc.add(attraction);
+                }
+
+                update() {
+                    this.pos.add(this.vel);
+                    this.vel.add(this.acc);
+                    this.vel.limit(this.maxSpeed);
+                    this.acc.mult(0);
+                    
+                    // Slight color variation
+                    this.hue = (this.hue + p.random(-0.5, 0.5)) % 360;
+                    this.color = p.color(this.hue, this.saturation, this.brightness, this.alpha);
+                }
+
+                display() {
+                    // Draw to trail buffer
+                    trailGraphics.fill(this.color);
+                    trailGraphics.noStroke();
+                    trailGraphics.ellipse(this.pos.x, this.pos.y, this.size * 0.7);
+                    
+                    // Draw main boid
+                    p.fill(this.color);
+                    p.ellipse(this.pos.x, this.pos.y, this.size);
+                    
+                    // Glow effect
+                    for (let i = 1; i <= 3; i++) {
+                        p.fill(this.hue, this.saturation - i * 10, this.brightness + i * 5, 0.2);
+                        p.ellipse(this.pos.x, this.pos.y, this.size + i * 3);
+                    }
+                }
+            }
+
+            class Attractor {
+                constructor(x, y) {
+                    this.pos = p.createVector(x, y);
+                    this.radius = 100;
+                    this.strength = 0.5;
+                    this.lifespan = 255;
+                    this.decay = 0.7;
+                }
+
+                update() {
+                    this.lifespan -= this.decay;
+                }
+
+                display() {
+                    p.fill(60, 20, 100, this.lifespan / 255 * 0.3);
+                    p.ellipse(this.pos.x, this.pos.y, this.radius * 2);
+                    
+                    p.fill(60, 20, 100, this.lifespan / 255 * 0.6);
+                    p.ellipse(this.pos.x, this.pos.y, this.radius);
+                }
+            }
+        };
+
+        new p5(sketch);
+    </script>
+
+              
+          
+                
+          
+              
+</body></html>
